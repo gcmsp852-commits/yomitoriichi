@@ -388,18 +388,17 @@
                 const response = await fetch(apiUrl);
                 if (!response.ok) return false;
                 const data = await response.json();
-                // APIレスポンス: { "results": { "mupicode": "NNNNN", "lv01Nm": "..." } }
-                if (!data || !data.results || !data.results.mupicode) return false;
+                // APIレスポンス: { "results": { "muniCd": "23222", "lv01Nm": "大田町" } }
+                if (!data || !data.results || !data.results.muniCd) return false;
 
-                // APIから得られた市町村コード（5桁文字列）→ 6桁に変換（チェックディジット付き）
-                const apiMupicode = data.results.mupicode; // 5桁（例: "23230"）
+                // APIから得られた市町村コード（5桁文字列）
+                const apiMuniCd = data.results.muniCd; // 5桁（例: "23222"）
                 // QRに埋め込まれた市町村コードは6桁整数をparseIntしたもの
-                // 比較: QR側の6桁コードの上5桁とAPI側の5桁コードを比較
+                // 比較: QR側の6桁コードの上5桁（チェックディジット除外）とAPI側の5桁コードを比較
                 const qrCodeStr = String(municipalityExt24).padStart(6, '0'); // 整数→6桁文字列に復元
-                // 上5桁（チェックディジット除外）で比較
                 const qrCode5 = qrCodeStr.substring(0, 5);
 
-                return qrCode5 === apiMupicode;
+                return qrCode5 === apiMuniCd;
             } catch(e) {
                 return false; // API通信エラーの場合は不一致とする
             }
