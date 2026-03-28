@@ -392,6 +392,7 @@ function scan(matrix, options) {
                     readerIdExt32: decoded.readerIdExt32,
                     locationLatExt24: decoded.locationLatExt24,
                     locationLonExt24: decoded.locationLonExt24,
+                    municipalityExt24: decoded.municipalityExt24,
                     location: {
                         topRightCorner: extracted.mappingFunction(location_1.dimension, 0),
                         topLeftCorner: extracted.mappingFunction(0, 0),
@@ -1182,15 +1183,17 @@ function decode(data, version) {
                 // 管理部16ビットを読み取って result に保存
                 result.managementCode = stream.readBits(16);
                 // 拡張管理部: 作成日時(bit4=0x0010), 読取期限(bit3=0x0008), 読取者ID(bit2=0x0004), 画像データID(bit1=0x0002), 読取位置(bit0=0x0001)
-                // 順番: 作成日時32bit → 読取期限32bit → 読取者ID32bit → 画像データID32bit → 読取位置48bit
+                // 符号化色数(bit14-13): 01の場合、市町村コード24bitあり
+                // 順番: 作成日時32bit → 読取期限32bit → 読取者ID32bit → 画像データID32bit → 読取位置48bit → 市町村コード24bit
                 var extBlockCount = 0;
                 if ((result.managementCode & 0x0010) !== 0) extBlockCount++; // 作成日時
                 if ((result.managementCode & 0x0008) !== 0) extBlockCount++; // 読取期限
                 if ((result.managementCode & 0x0004) !== 0) extBlockCount++; // 読取者ID
                 if ((result.managementCode & 0x0002) !== 0) extBlockCount++; // 画像データID
                 var hasLocation = (result.managementCode & 0x0001) !== 0;    // 読取位置
-                var extBitsNeeded = extBlockCount * 32 + (hasLocation ? 48 : 0) + 4; // + 終端4bit
-                if ((extBlockCount > 0 || hasLocation) && stream.available() >= extBitsNeeded) {
+                var hasMunicipality = ((result.managementCode & 0x6000) === 0x2000); // 符号化色数=01 → 市町村コードあり
+                var extBitsNeeded = extBlockCount * 32 + (hasLocation ? 48 : 0) + (hasMunicipality ? 24 : 0) + 4; // + 終端4bit
+                if ((extBlockCount > 0 || hasLocation || hasMunicipality) && stream.available() >= extBitsNeeded) {
                     if ((result.managementCode & 0x0010) !== 0) {
                         result.creationDateTimeExt32 = stream.readBits(32);
                     }
@@ -1206,6 +1209,9 @@ function decode(data, version) {
                     if (hasLocation) {
                         result.locationLatExt24 = stream.readBits(24);
                         result.locationLonExt24 = stream.readBits(24);
+                    }
+                    if (hasMunicipality) {
+                        result.municipalityExt24 = stream.readBits(24);
                     }
                     // 後ろの終端4ビット(0000)を読み飛ばす
                     stream.readBits(4);

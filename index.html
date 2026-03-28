@@ -85,7 +85,7 @@
                 <button class="btn" id="normalModeBtn">通常モード</button>
                 <button class="btn sys-enc" id="digitalSignModeBtn">電子署名モード</button>
                 <button class="btn double-enc" id="doubleEncModeBtn">二重暗号化モード</button>
-                <button class="btn" id="colorEncModeBtn" style="background-color:#00897B;">カラー符号化モード</button>
+                <button class="btn" id="colorEncModeBtn" style="background-color:#00897B; display:none;">カラー符号化モード</button>
                 <button class="btn secondary" id="logoutBtn" style="margin-top:10px; font-size:0.9rem;">ログアウト</button>
             </div>
         </div>
@@ -356,6 +356,53 @@
             const lonThreshold = cosLat > 0 ? 0.0009 / cosLat : 0.0009;
             const lonDiff = Math.abs(devLon - qrLon);
             return latDiff <= 0.0009 && lonDiff <= lonThreshold;
+        }
+
+        // ★ 市町村コードチェック関数
+        // QRに埋め込まれた市町村コード（24bit整数）とデバイスのGPS位置を比較
+        // 国土地理院の逆ジオコーディングAPIでデバイスの市町村コードを取得して比較する
+        async function checkMunicipality(municipalityExt24) {
+            // デバイスの現在位置を取得
+            if (!currentDevicePosition) {
+                try {
+                    await new Promise(function(resolve, reject) {
+                        if (!navigator.geolocation) { reject(new Error('GPS不可')); return; }
+                        navigator.geolocation.getCurrentPosition(
+                            function(pos) {
+                                currentDevicePosition = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+                                resolve();
+                            },
+                            function() { reject(new Error('GPS取得失敗')); },
+                            { enableHighAccuracy: true, timeout: 10000 }
+                        );
+                    });
+                } catch(e) {
+                    return false; // GPS取得不可の場合は不一致とする
+                }
+            }
+
+            // 国土地理院の逆ジオコーディングAPIでデバイス位置の市町村コードを取得
+            try {
+                const apiUrl = 'https://mreversegeocoder.gsi.go.jp/reverse-geocoder/LonLatToAddress?lat='
+                    + currentDevicePosition.lat + '&lon=' + currentDevicePosition.lon;
+                const response = await fetch(apiUrl);
+                if (!response.ok) return false;
+                const data = await response.json();
+                // APIレスポンス: { "results": { "mupicode": "NNNNN", "lv01Nm": "..." } }
+                if (!data || !data.results || !data.results.mupicode) return false;
+
+                // APIから得られた市町村コード（5桁文字列）→ 6桁に変換（チェックディジット付き）
+                const apiMupicode = data.results.mupicode; // 5桁（例: "23230"）
+                // QRに埋め込まれた市町村コードは6桁整数をparseIntしたもの
+                // 比較: QR側の6桁コードの上5桁とAPI側の5桁コードを比較
+                const qrCodeStr = String(municipalityExt24).padStart(6, '0'); // 整数→6桁文字列に復元
+                // 上5桁（チェックディジット除外）で比較
+                const qrCode5 = qrCodeStr.substring(0, 5);
+
+                return qrCode5 === apiMupicode;
+            } catch(e) {
+                return false; // API通信エラーの場合は不一致とする
+            }
         }
 
         // ログイン処理
@@ -1761,6 +1808,15 @@
                         return;
                     }
                 }
+                // 市町村コードチェック（カラーモード用・同期的）
+                if (qr.municipalityExt24 !== undefined) {
+                    if (!currentDevicePosition) {
+                        target._municipalityFailed = true;
+                        return;
+                    }
+                    // 同期チェックはできないので、フラグだけ立てて後で非同期チェック
+                    target._pendingMunicipalityCheck = qr.municipalityExt24;
+                }
                 target._expiryChecked = true;
             }
             if (topBit === 0) {
@@ -2035,6 +2091,11 @@
                             showResultScreen(null, "読取位置が一致しません");
                             return;
                         }
+                        if (colorScanResult._municipalityFailed) {
+                            isScanning = false; isProcessing = false;
+                            showResultScreen(null, "市町村コードが一致しません");
+                            return;
+                        }
                         if (colorCount === 4) {
                             isScanning = false;
                             isProcessing = false;
@@ -2098,6 +2159,7 @@
                                                     readerIdExt32: res.readerIdExt32,
                                                     locationLatExt24: res.locationLatExt24,
                                                     locationLonExt24: res.locationLonExt24,
+                                                    municipalityExt24: res.municipalityExt24,
                                                     codewords: res.codewords,
                                                     dataBytes: res.dataBytes,
                                                     points: [
@@ -2154,6 +2216,7 @@
                                                     readerIdExt32: cropRes.readerIdExt32,
                                                     locationLatExt24: cropRes.locationLatExt24,
                                                     locationLonExt24: cropRes.locationLonExt24,
+                                                    municipalityExt24: cropRes.municipalityExt24,
                                                     codewords: cropRes.codewords,
                                                     dataBytes: cropRes.dataBytes,
                                                     points: [
@@ -2210,6 +2273,7 @@
                                             readerIdExt32: cropRes.readerIdExt32,
                                             locationLatExt24: cropRes.locationLatExt24,
                                             locationLonExt24: cropRes.locationLonExt24,
+                                            municipalityExt24: cropRes.municipalityExt24,
                                             codewords: cropRes.codewords,
                                             points: [
                                                 { x: cropRes.location.topLeftCorner.x + sx, y: cropRes.location.topLeftCorner.y + sy },
@@ -2266,6 +2330,7 @@
                                         readerIdExt32: resFull.readerIdExt32,
                                         locationLatExt24: resFull.locationLatExt24,
                                         locationLonExt24: resFull.locationLonExt24,
+                                        municipalityExt24: resFull.municipalityExt24,
                                         codewords: resFull.codewords,
                                         dataBytes: resFull.dataBytes,
                                         points: [
@@ -2316,6 +2381,7 @@
                                         creationDateTimeExt32: item.creationDateTimeExt32,
                                         locationLatExt24: item.locationLatExt24,
                                         locationLonExt24: item.locationLonExt24,
+                                        municipalityExt24: item.municipalityExt24,
                                         points: resultPts,
                                         codewords: item.codewords,
                                         dataBytes: item.dataBytes
@@ -2343,6 +2409,15 @@
                                             return;
                                         }
                                     }
+                                    // 市町村コードチェック
+                                    if (firstQR.municipalityExt24 !== undefined) {
+                                        const muniMatch = await checkMunicipality(firstQR.municipalityExt24);
+                                        if (!muniMatch) {
+                                            isScanning = false; isProcessing = false;
+                                            showResultScreen(null, "市町村コードが一致しません");
+                                            return;
+                                        }
+                                    }
                                     statusText.innerText = "第2QR（電子署名データ）を探索中...";
                                 } else {
                                     secondQR = { text: resultData, managementCode: resultMgmt, points: resultPts };
@@ -2363,6 +2438,7 @@
                                 creationDateTimeExt32: item.creationDateTimeExt32,
                                 locationLatExt24: item.locationLatExt24,
                                 locationLonExt24: item.locationLonExt24,
+                                municipalityExt24: item.municipalityExt24,
                                 points: resultPts,
                                 codewords: item.codewords,
                                 dataBytes: item.dataBytes
@@ -2388,6 +2464,15 @@
                                 if (!locMatch) {
                                     isScanning = false; isProcessing = false;
                                     showResultScreen(null, "読取位置が一致しません");
+                                    return;
+                                }
+                            }
+                            // ★ 市町村コードチェック（全モード共通）
+                            if (firstQR.municipalityExt24 !== undefined) {
+                                const muniMatch = await checkMunicipality(firstQR.municipalityExt24);
+                                if (!muniMatch) {
+                                    isScanning = false; isProcessing = false;
+                                    showResultScreen(null, "市町村コードが一致しません");
                                     return;
                                 }
                             }
@@ -2437,6 +2522,7 @@
                                         creationDateTimeExt32: item.creationDateTimeExt32,
                                         locationLatExt24: item.locationLatExt24,
                                         locationLonExt24: item.locationLonExt24,
+                                        municipalityExt24: item.municipalityExt24,
                                         points: resultPts,
                                         codewords: item.codewords,
                                         dataBytes: item.dataBytes
@@ -2461,6 +2547,15 @@
                                         if (!locMatch) {
                                             isScanning = false; isProcessing = false;
                                             showResultScreen(null, "読取位置が一致しません");
+                                            return;
+                                        }
+                                    }
+                                    // 市町村コードチェック
+                                    if (firstQR.municipalityExt24 !== undefined) {
+                                        const muniMatch = await checkMunicipality(firstQR.municipalityExt24);
+                                        if (!muniMatch) {
+                                            isScanning = false; isProcessing = false;
+                                            showResultScreen(null, "市町村コードが一致しません");
                                             return;
                                         }
                                     }
